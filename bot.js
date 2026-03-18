@@ -8,40 +8,33 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const sharp = require("sharp");
 
-function limitImages(repImages) {
-  const MAX_TOTAL_BYTES = 3.5 * 1024 * 1024; // 3.5MB total base64
-  const MAX_SINGLE_BYTES = 1.2 * 1024 * 1024; // 1.2MB per image
-
-  // Truncate individual images that are too large (rough downsample)
-  const sized = repImages.map(img => {
-    if (img.b64.length > MAX_SINGLE_BYTES) {
-      console.log("Image too large (" + Math.round(img.b64.length/1024) + "KB), truncating");
-      // Decode, keep first MAX_SINGLE_BYTES worth, re-encode
-      // Since we cant resize without sharp, just take the first image only when oversized
-      return { ...img, oversized: true };
-    }
-    return img;
-  });
-
-  // If any single image is oversized, just use the first one
-  if (sized.some(i => i.oversized)) {
-    console.log("Oversized image detected, using first image only");
-    return [repImages[0]];
+async function resizeIfNeeded(img) {
+  const MAX_BYTES = 4 * 1024 * 1024; // 4MB raw bytes
+  const rawBytes = Buffer.from(img.b64, 'base64').length;
+  if (rawBytes <= MAX_BYTES) return img;
+  console.log("Resizing image from " + Math.round(rawBytes/1024/1024*10)/10 + "MB");
+  let quality = 80;
+  let resized;
+  // Keep reducing size until under 4MB
+  while (quality > 10) {
+    resized = await sharp(Buffer.from(img.b64, 'base64'))
+      .resize(1200, 1200, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality })
+      .toBuffer();
+    if (resized.length <= MAX_BYTES) break;
+    quality -= 15;
   }
+  console.log("Resized to " + Math.round(resized.length/1024/1024*10)/10 + "MB at quality " + quality);
+  return { b64: resized.toString('base64'), mediaType: 'image/jpeg' };
+}
 
-  // Check total size
-  let total = 0;
-  const result = [];
-  for (const img of sized) {
-    total += img.b64.length;
-    if (total > MAX_TOTAL_BYTES) {
-      console.log("Total size limit reached, using " + result.length + " images");
-      break;
-    }
-    result.push(img);
-  }
-  return result.length > 0 ? result : [repImages[0]];
+async function limitImages(repImages) {
+  // Resize all images first
+  const resized = await Promise.all(repImages.map(resizeIfNeeded));
+  // Cap at 3 images
+  return resized.slice(0, 2);
 }
 
 const client = new Client({
@@ -90,7 +83,7 @@ function fetchImageAsBase64(url) {
 }
 
 async function findAuthenticImage(repImages) {
-  const limitedImages = limitImages(repImages);
+  const limitedImages = await limitImages(repImages);
   const contentParts = [];
   limitedImages.forEach((img, i) => {
     contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
@@ -100,18 +93,20 @@ async function findAuthenticImage(repImages) {
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 1000,
+    max_tokens: 600,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
-    system: `You are a JSON-only product identification API. Identify the AUTHENTIC BRAND of the product — ignore any replica/1688 branding. Look at logos, design, colorway to identify the real brand.
+    system: `You are a JSON-only product identification API. Your job is to identify what REAL brand and product is shown — this may be a replica so look carefully at logos, fonts, colorways, hardware, tags, and stitching patterns to identify the authentic brand being copied.
+
+Common brands to look for: Nike, Adidas, Supreme, Stone Island, Alo Yoga, Lululemon, North Face, Moncler, Off-White, Jordan, New Balance, Carhartt, Essentials/Fear of God, Trapstar, Represent, Rhude, Palm Angels, Stussy, Chrome Hearts, Corteiz, Sp5der, Gallery Dept, Dior, Louis Vuitton, Gucci, Prada, Balenciaga, and any other recognizable brand.
 
 Respond with ONLY raw JSON. No words before or after. No markdown.
 
 {"productName":"exact authentic product name and colorway","brand":"real brand name","searchQuery":"search query used","authenticImageUrl":"direct CDN image URL ending in .jpg .png or .webp","authenticImageUrl2":"second fallback CDN URL","source":"site name"}
 
 Rules:
-- Identify REAL brand (Alo Yoga, Nike, Supreme etc) not fake names
-- Find real direct CDN image URLs from cdn.shopify.com, images.stockx.com, media.goat.com, or official brand sites
-- URLs must end in .jpg, .png, or .webp
+- Identify the REAL brand, not any fake/replica name on tags
+- Keep searchQuery short and specific e.g. "Alo Yoga Accolade hoodie grey"
+- Find real direct CDN URLs from cdn.shopify.com, images.stockx.com, media.goat.com, or brand sites
 - Entire response must be valid JSON starting with { and ending with }`,
     messages: [{ role: "user", content: contentParts }]
   });
@@ -124,7 +119,7 @@ Rules:
 }
 
 async function scoreQuality(repImages, productInfo) {
-  const limitedImages = limitImages(repImages);
+  const limitedImages = await limitImages(repImages);
   const contentParts = [];
   limitedImages.forEach((img) => {
     contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
