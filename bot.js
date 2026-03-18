@@ -173,10 +173,16 @@ function buildResultEmbed(productInfo, result, username, repImageUrl) {
   const gradeColor = { S: 0x00c853, A: 0x1565c0, B: 0x6a1b9a, C: 0xf9a825, D: 0xe64a19, F: 0x424242 };
   const scoreBar = (score, max) => {
     max = max || 10;
+    score = Math.max(0, Math.min(max, Number(score) || 0));
     const filled = Math.round((score / max) * 8);
-    return "█".repeat(filled) + "░".repeat(8 - filled) + " " + score + "/" + max;
+    const empty = 8 - filled;
+    return "█".repeat(filled) + "░".repeat(empty) + " " + score + "/" + max;
   };
-  const cats = result.categories;
+  // Safety defaults for missing fields
+  const cats = result.categories || {};
+  const safecat = (key) => cats[key] || { score: 0, note: "N/A" };
+  result.greenFlags = result.greenFlags || [];
+  result.redFlags = result.redFlags || [];
   const embed = new EmbedBuilder()
     .setColor(gradeColor[result.grade] || 0x888888)
     .setTitle((gradeEmoji[result.grade] || "📊") + " " + productInfo.productName)
@@ -186,12 +192,12 @@ function buildResultEmbed(productInfo, result, username, repImageUrl) {
       {
         name: "📋 Category Breakdown",
         value: [
-          "**Stitching**      " + scoreBar(cats.stitching.score) + " — " + cats.stitching.note,
-          "**Materials**      " + scoreBar(cats.materials.score) + " — " + cats.materials.note,
-          "**Color**          " + scoreBar(cats.colorAccuracy.score) + " — " + cats.colorAccuracy.note,
-          "**Logo**           " + scoreBar(cats.logoPlacement.score) + " — " + cats.logoPlacement.note,
-          "**Hardware**       " + scoreBar(cats.hardwareQuality.score) + " — " + cats.hardwareQuality.note,
-          "**Finish**         " + scoreBar(cats.overallFinish.score) + " — " + cats.overallFinish.note,
+          "**Stitching**      " + scoreBar(safecat("stitching").score) + " — " + safecat("stitching").note,
+          "**Materials**      " + scoreBar(safecat("materials").score) + " — " + safecat("materials").note,
+          "**Color**          " + scoreBar(safecat("colorAccuracy").score) + " — " + safecat("colorAccuracy").note,
+          "**Logo**           " + scoreBar(safecat("logoPlacement").score) + " — " + safecat("logoPlacement").note,
+          "**Hardware**       " + scoreBar(safecat("hardwareQuality").score) + " — " + safecat("hardwareQuality").note,
+          "**Finish**         " + scoreBar(safecat("overallFinish").score) + " — " + safecat("overallFinish").note,
         ].join("\n"),
         inline: false,
       },
