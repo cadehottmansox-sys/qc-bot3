@@ -95,43 +95,34 @@ async function identifyAndScore(repImages) {
     model: "claude-sonnet-4-20250514",
     max_tokens: 800,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
-    system: `You are a rep/replica product grader. Given replica image(s), identify the real brand/product, search for authentic references, then score.
+    system: `You are a rep grading API. Search the web for the authentic product, compare it to the replica image(s), then output a grade.
 
-Grade standards:
-- S (90-100): 1:1, indistinguishable from authentic
-- A (75-89): OEM quality, very close, minor flaws only up close
-- B (60-74): Factory quality, good rep, passable to most people
-- C (45-59): Mid, noticeable flaws, passable from distance only
-- D (30-44): Low quality, most people would clock it
-- F (0-29): Trash, clearly fake
+CRITICAL: Your ENTIRE response must be ONLY the JSON object below. No introduction. No explanation. No text before or after. Start your response with { and end with }.
 
-Be fair — many 1688 items are decent quality. Use rep community language.
+Grade scale: S=1:1(90-100), A=OEM(75-89), B=Factory(60-74), C=Mid(45-59), D=Low(30-44), F=Trash(0-29). Be fair, many 1688 items are decent.
 
-Respond with ONLY raw JSON:
-{
-  "productName": "full product name and colorway",
-  "brand": "brand name",
-  "overallScore": <0-100>,
-  "grade": "<S|A|B|C|D|F>",
-  "verdict": "<one punchy sentence>",
-  "categories": {
-    "stitching":       { "score": <0-10>, "note": "<8 words max>" },
-    "materials":       { "score": <0-10>, "note": "<8 words max>" },
-    "colorAccuracy":   { "score": <0-10>, "note": "<8 words max>" },
-    "logoPlacement":   { "score": <0-10>, "note": "<8 words max>" },
-    "hardwareQuality": { "score": <0-10>, "note": "<8 words max>" },
-    "overallFinish":   { "score": <0-10>, "note": "<8 words max>" }
-  },
-  "redFlags": ["<issue>", "<issue>"],
-  "greenFlags": ["<strength>", "<strength>"],
-  "buyRecommendation": "<Yes / No / Maybe — one sentence>"
-}`,
+{"productName":"name and colorway","brand":"brand","overallScore":0,"grade":"S","verdict":"one sentence","categories":{"stitching":{"score":0,"note":"note"},"materials":{"score":0,"note":"note"},"colorAccuracy":{"score":0,"note":"note"},"logoPlacement":{"score":0,"note":"note"},"hardwareQuality":{"score":0,"note":"note"},"overallFinish":{"score":0,"note":"note"}},"redFlags":["flag"],"greenFlags":["flag"],"buyRecommendation":"reason"}`,
     messages: [{ role: "user", content: contentParts }]
   });
 
   const textBlock = response.content.find(b => b.type === "text");
   if (!textBlock) throw new Error("No response from Claude");
-  const match = textBlock.text.match(/\{[\s\S]*\}/);
+  let match = textBlock.text.match(/\{[\s\S]*\}/);
+  // If no JSON found, ask Claude to just output the JSON
+  if (!match) {
+    console.log("No JSON in first response, retrying...");
+    const retry = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 600,
+      messages: [
+        { role: "user", content: contentParts },
+        { role: "assistant", content: textBlock.text },
+        { role: "user", content: "Output ONLY the JSON object. Nothing else. Start with {" }
+      ]
+    });
+    const retryBlock = retry.content.find(b => b.type === "text");
+    if (retryBlock) match = retryBlock.text.match(/\{[\s\S]*\}/);
+  }
   if (!match) throw new Error("No JSON in response: " + textBlock.text.slice(0, 120));
   const result = JSON.parse(match[0]);
   // Normalize into expected shape
