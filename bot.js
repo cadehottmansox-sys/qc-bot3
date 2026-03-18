@@ -82,92 +82,73 @@ function fetchImageAsBase64(url) {
   });
 }
 
-async function findAuthenticImage(repImages) {
+async function identifyAndScore(repImages) {
   const limitedImages = await limitImages(repImages);
   const contentParts = [];
   limitedImages.forEach((img, i) => {
     contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
-    contentParts.push({ type: "text", text: "Image " + (i + 1) + " of " + limitedImages.length + " — same product, different angle." });
+    contentParts.push({ type: "text", text: "Replica image " + (i+1) + " of " + limitedImages.length });
   });
-  contentParts.push({ type: "text", text: "Using all images above, identify the REAL authentic brand/product and find authentic reference image URLs." });
+  contentParts.push({ type: "text", text: "Identify this product's real brand and model, search for authentic reference images, then score the replica." });
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 600,
+    max_tokens: 800,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
-    system: `You are a JSON-only product identification API. Your job is to identify what REAL brand and product is shown — this may be a replica so look carefully at logos, fonts, colorways, hardware, tags, and stitching patterns to identify the authentic brand being copied.
-
-Common brands to look for: Nike, Adidas, Supreme, Stone Island, Alo Yoga, Lululemon, North Face, Moncler, Off-White, Jordan, New Balance, Carhartt, Essentials/Fear of God, Trapstar, Represent, Rhude, Palm Angels, Stussy, Chrome Hearts, Corteiz, Sp5der, Gallery Dept, Dior, Louis Vuitton, Gucci, Prada, Balenciaga, and any other recognizable brand.
-
-Respond with ONLY raw JSON. No words before or after. No markdown.
-
-{"productName":"exact authentic product name and colorway","brand":"real brand name","searchQuery":"search query used","authenticImageUrl":"direct CDN image URL ending in .jpg .png or .webp","authenticImageUrl2":"second fallback CDN URL","source":"site name"}
-
-Rules:
-- Identify the REAL brand, not any fake/replica name on tags
-- Keep searchQuery short and specific e.g. "Alo Yoga Accolade hoodie grey"
-- Find real direct CDN URLs from cdn.shopify.com, images.stockx.com, media.goat.com, or brand sites
-- Entire response must be valid JSON starting with { and ending with }`,
-    messages: [{ role: "user", content: contentParts }]
-  });
-
-  const textBlock = response.content.find(b => b.type === "text");
-  if (!textBlock) throw new Error("No identification response");
-  const match = textBlock.text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON in response: " + textBlock.text.slice(0, 120));
-  return JSON.parse(match[0]);
-}
-
-async function scoreQuality(repImages, productInfo) {
-  const limitedImages = await limitImages(repImages);
-  const contentParts = [];
-  limitedImages.forEach((img) => {
-    contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
-  });
-  contentParts.push({ type: "text", text: "These are " + limitedImages.length + " image(s) of a 1688/replica product identified as: " + productInfo.productName + " by " + productInfo.brand + ". Use web search to find authentic reference images of this product, then compare and score the replica." });
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1500,
-    tools: [{ type: "web_search_20250305", name: "web_search" }],
-    system: `You are an expert rep/replica product grader used by the rep buying community. You will receive replica image(s) and a product name. Use web search to find authentic reference images, then compare and score.
+    system: `You are a rep/replica product grader. Given replica image(s), identify the real brand/product, search for authentic references, then score.
 
 Grade standards:
-- S (90-100): 1:1 quality, indistinguishable from authentic
-- A (75-89): OEM quality, very close, minor flaws only visible up close
-- B (60-74): Factory quality, good rep, some flaws but passable to most
-- C (45-59): Mid quality, noticeable flaws, only passable from a distance
-- D (30-44): Low quality, obvious flaws, most people would clock it
-- F (0-29): Trash quality, clearly fake, do not buy
+- S (90-100): 1:1, indistinguishable from authentic
+- A (75-89): OEM quality, very close, minor flaws only up close
+- B (60-74): Factory quality, good rep, passable to most people
+- C (45-59): Mid, noticeable flaws, passable from distance only
+- D (30-44): Low quality, most people would clock it
+- F (0-29): Trash, clearly fake
 
-Be fair and realistic. Many 1688 items are actually decent. Do not over-penalize.
+Be fair — many 1688 items are decent quality. Use rep community language.
 
-Return ONLY valid JSON (no markdown):
+Respond with ONLY raw JSON:
 {
+  "productName": "full product name and colorway",
+  "brand": "brand name",
   "overallScore": <0-100>,
   "grade": "<S|A|B|C|D|F>",
-  "verdict": "<one punchy sentence using rep community language>",
+  "verdict": "<one punchy sentence>",
   "categories": {
-    "stitching":       { "score": <0-10>, "note": "<10 words max>" },
-    "materials":       { "score": <0-10>, "note": "<10 words max>" },
-    "colorAccuracy":   { "score": <0-10>, "note": "<10 words max>" },
-    "logoPlacement":   { "score": <0-10>, "note": "<10 words max>" },
-    "hardwareQuality": { "score": <0-10>, "note": "<10 words max>" },
-    "overallFinish":   { "score": <0-10>, "note": "<10 words max>" }
+    "stitching":       { "score": <0-10>, "note": "<8 words max>" },
+    "materials":       { "score": <0-10>, "note": "<8 words max>" },
+    "colorAccuracy":   { "score": <0-10>, "note": "<8 words max>" },
+    "logoPlacement":   { "score": <0-10>, "note": "<8 words max>" },
+    "hardwareQuality": { "score": <0-10>, "note": "<8 words max>" },
+    "overallFinish":   { "score": <0-10>, "note": "<8 words max>" }
   },
   "redFlags": ["<issue>", "<issue>"],
   "greenFlags": ["<strength>", "<strength>"],
-  "buyRecommendation": "<Yes / No / Maybe — one sentence reason>"
+  "buyRecommendation": "<Yes / No / Maybe — one sentence>"
 }`,
     messages: [{ role: "user", content: contentParts }]
   });
 
   const textBlock = response.content.find(b => b.type === "text");
-  if (!textBlock) throw new Error("No scoring response");
+  if (!textBlock) throw new Error("No response from Claude");
   const match = textBlock.text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("No JSON in score response: " + textBlock.text.slice(0, 120));
-  return JSON.parse(match[0]);
+  if (!match) throw new Error("No JSON in response: " + textBlock.text.slice(0, 120));
+  const result = JSON.parse(match[0]);
+  // Normalize into expected shape
+  return {
+    productInfo: { productName: result.productName, brand: result.brand, source: "web search" },
+    result: {
+      overallScore: result.overallScore,
+      grade: result.grade,
+      verdict: result.verdict,
+      categories: result.categories,
+      redFlags: result.redFlags,
+      greenFlags: result.greenFlags,
+      buyRecommendation: result.buyRecommendation
+    }
+  };
 }
+
 
 function buildDashboardEmbed(session) {
   const hasRep = !!(session?.repUrl || session?.repUrls?.length);
@@ -239,25 +220,21 @@ async function runAnalysis(interaction, repUrls, repUrl, authUrl, username) {
     const allRepUrls = repUrls || [repUrl];
     const repImages = await Promise.all(allRepUrls.map(url => fetchImageAsBase64(url)));
 
-    let productInfo;
+    await interaction.editReply({
+      embeds: [new EmbedBuilder().setColor(0x111111).setTitle("🔬 Analyzing...").setDescription("🔍 Identifying product & scoring — this takes ~20 seconds...")],
+      components: [],
+    });
+
+    let productInfo, result;
     try {
-      productInfo = await findAuthenticImage(repImages);
+      const combined = await identifyAndScore(repImages);
+      productInfo = combined.productInfo;
+      result = combined.result;
     } catch (e) {
-      console.error("findAuthenticImage error:", e);
-      return interaction.editReply({ content: "❌ Couldn't identify the product: `" + e.message + "`", embeds: [], components: [] });
+      console.error("identifyAndScore error:", e);
+      return interaction.editReply({ content: "❌ Analysis failed: `" + e.message + "`", embeds: [], components: [] });
     }
 
-    await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0x111111).setTitle("🔬 Analyzing...").setDescription("🌐 **Step 2/3** — Found **" + productInfo.productName + "** · Fetching authentic image...")],
-      components: [],
-    });
-
-    await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0x111111).setTitle("🔬 Analyzing...").setDescription("⚖️ **Step 3/3** — Scoring **" + productInfo.productName + "** across " + repImages.length + " image(s)...")],
-      components: [],
-    });
-
-    const result = await scoreQuality(repImages, productInfo);
     const embed = buildResultEmbed(productInfo, result, username, repUrl || allRepUrls[0]);
 
     saveHistory({
@@ -282,6 +259,7 @@ async function runAnalysis(interaction, repUrls, repUrl, authUrl, username) {
     await interaction.editReply({ content: "❌ Something went wrong: `" + err.message + "`", embeds: [], components: [] });
   }
 }
+
 
 client.once("ready", async () => {
   console.log("✅ Rep Quality Bot online as " + client.user.tag);
