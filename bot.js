@@ -9,6 +9,41 @@ const path = require("path");
 const https = require("https");
 const http = require("http");
 
+function limitImages(repImages) {
+  const MAX_TOTAL_BYTES = 3.5 * 1024 * 1024; // 3.5MB total base64
+  const MAX_SINGLE_BYTES = 1.2 * 1024 * 1024; // 1.2MB per image
+
+  // Truncate individual images that are too large (rough downsample)
+  const sized = repImages.map(img => {
+    if (img.b64.length > MAX_SINGLE_BYTES) {
+      console.log("Image too large (" + Math.round(img.b64.length/1024) + "KB), truncating");
+      // Decode, keep first MAX_SINGLE_BYTES worth, re-encode
+      // Since we cant resize without sharp, just take the first image only when oversized
+      return { ...img, oversized: true };
+    }
+    return img;
+  });
+
+  // If any single image is oversized, just use the first one
+  if (sized.some(i => i.oversized)) {
+    console.log("Oversized image detected, using first image only");
+    return [repImages[0]];
+  }
+
+  // Check total size
+  let total = 0;
+  const result = [];
+  for (const img of sized) {
+    total += img.b64.length;
+    if (total > MAX_TOTAL_BYTES) {
+      console.log("Total size limit reached, using " + result.length + " images");
+      break;
+    }
+    result.push(img);
+  }
+  return result.length > 0 ? result : [repImages[0]];
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -55,10 +90,11 @@ function fetchImageAsBase64(url) {
 }
 
 async function findAuthenticImage(repImages) {
+  const limitedImages = limitImages(repImages);
   const contentParts = [];
-  repImages.forEach((img, i) => {
+  limitedImages.forEach((img, i) => {
     contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
-    contentParts.push({ type: "text", text: "Image " + (i + 1) + " of " + repImages.length + " — same product, different angle." });
+    contentParts.push({ type: "text", text: "Image " + (i + 1) + " of " + limitedImages.length + " — same product, different angle." });
   });
   contentParts.push({ type: "text", text: "Using all images above, identify the REAL authentic brand/product and find authentic reference image URLs." });
 
@@ -88,11 +124,12 @@ Rules:
 }
 
 async function scoreQuality(repImages, productInfo) {
+  const limitedImages = limitImages(repImages);
   const contentParts = [];
-  repImages.forEach((img) => {
+  limitedImages.forEach((img) => {
     contentParts.push({ type: "image", source: { type: "base64", media_type: img.mediaType, data: img.b64 } });
   });
-  contentParts.push({ type: "text", text: "These are " + repImages.length + " image(s) of a 1688/replica product identified as: " + productInfo.productName + " by " + productInfo.brand + ". Use web search to find authentic reference images of this product, then compare and score the replica." });
+  contentParts.push({ type: "text", text: "These are " + limitedImages.length + " image(s) of a 1688/replica product identified as: " + productInfo.productName + " by " + productInfo.brand + ". Use web search to find authentic reference images of this product, then compare and score the replica." });
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
