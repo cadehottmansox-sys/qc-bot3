@@ -130,13 +130,23 @@ async function scoreQuality(repImages, productInfo) {
     model: "claude-sonnet-4-20250514",
     max_tokens: 1500,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
-    system: `You are an expert authenticator for replica products. You will receive replica image(s) and a product name. Use web search to find authentic reference images of the product, then compare and score the replica.
+    system: `You are an expert rep/replica product grader used by the rep buying community. You will receive replica image(s) and a product name. Use web search to find authentic reference images, then compare and score.
+
+Grade standards:
+- S (90-100): 1:1 quality, indistinguishable from authentic
+- A (75-89): OEM quality, very close, minor flaws only visible up close
+- B (60-74): Factory quality, good rep, some flaws but passable to most
+- C (45-59): Mid quality, noticeable flaws, only passable from a distance
+- D (30-44): Low quality, obvious flaws, most people would clock it
+- F (0-29): Trash quality, clearly fake, do not buy
+
+Be fair and realistic. Many 1688 items are actually decent. Do not over-penalize.
 
 Return ONLY valid JSON (no markdown):
 {
   "overallScore": <0-100>,
   "grade": "<S|A|B|C|D|F>",
-  "verdict": "<one punchy sentence>",
+  "verdict": "<one punchy sentence using rep community language>",
   "categories": {
     "stitching":       { "score": <0-10>, "note": "<10 words max>" },
     "materials":       { "score": <0-10>, "note": "<10 words max>" },
@@ -187,6 +197,7 @@ function buildDashboardButtons(session) {
 
 function buildResultEmbed(productInfo, result, username, repImageUrl) {
   const gradeEmoji = { S: "💎", A: "✅", B: "🔵", C: "🟡", D: "🟠", F: "🔴" };
+  const gradeLabel = { S: "S-Tier / 1:1", A: "A-Tier / OEM", B: "B-Tier / Factory", C: "C-Tier / Mid", D: "D-Tier / Low", F: "F-Tier / Trash" };
   const gradeColor = { S: 0x00c853, A: 0x1565c0, B: 0x6a1b9a, C: 0xf9a825, D: 0xe64a19, F: 0x424242 };
   const scoreBar = (score, max) => {
     max = max || 10;
@@ -199,7 +210,7 @@ function buildResultEmbed(productInfo, result, username, repImageUrl) {
     .setTitle((gradeEmoji[result.grade] || "📊") + " " + productInfo.productName)
     .setDescription("**" + result.verdict + "**")
     .addFields(
-      { name: "Overall Score: " + result.overallScore + "/100 · Grade: " + result.grade, value: scoreBar(result.overallScore, 100), inline: false },
+      { name: "Overall Score: " + result.overallScore + "/100 · " + (gradeLabel[result.grade] || result.grade), value: scoreBar(result.overallScore, 100), inline: false },
       {
         name: "📋 Category Breakdown",
         value: [
